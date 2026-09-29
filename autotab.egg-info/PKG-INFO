@@ -1,0 +1,96 @@
+Metadata-Version: 2.4
+Name: autotab
+Version: 0.1.0
+Summary: Local video-assisted guitar tablature with an editable, beat-based score
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Provides-Extra: app
+Requires-Dist: streamlit<2,>=1.50; extra == "app"
+Requires-Dist: numpy<3,>=1.26; extra == "app"
+Requires-Dist: opencv-contrib-python<5,>=4.10; extra == "app"
+Requires-Dist: mediapipe<0.11,>=0.10.32; extra == "app"
+Requires-Dist: imageio-ffmpeg<1,>=0.6; extra == "app"
+Requires-Dist: pandas<4,>=2.2; extra == "app"
+Provides-Extra: dev
+Requires-Dist: pytest<10,>=8; extra == "dev"
+Requires-Dist: ruff<1,>=0.11; extra == "dev"
+
+# AutoTab
+
+A Python prototype that **listens to a performance, watches the fretboard, and creates editable tablature**. Six-string guitar is the primary workflow; standard four-string bass is also supported. You supply the BPM. The app never estimates tempo.
+
+This is an intentionally modular first pass, not a trained end-to-end transcription system. A pretrained hand model supplies landmarks; an audio pitch/onset estimator and geometric fretboard mapping cross-check them. Best results come from clean, isolated, single-note playing with a stationary camera and neck.
+
+## Run locally
+
+Python 3.11 or newer is required. Python 3.12 or 3.13 is a conservative choice if a dependency has no wheel for your platform. From this directory in PowerShell:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[app,dev]"
+.\.venv\Scripts\autotab.exe download-model
+.\.venv\Scripts\autotab.exe run
+```
+
+On macOS/Linux use `.venv/bin/python` and `.venv/bin/autotab`. Alternatively, activate the environment and run `streamlit run app.py`. Dependencies and the hand model need an initial network download; video analysis then runs locally. FFmpeg is included through `imageio-ffmpeg`. No API key or hosted AI service is required.
+
+The editor and example work without model weights. The model downloader retrieves the official version-1 [MediaPipe Hand Landmarker model](https://github.com/google-ai-edge/mediapipe-samples-web/blob/main/src/tasks/hand-landmarker.ts). The adapter uses the [documented video-mode API](https://developers.google.com/edge/mediapipe/solutions/vision/hand_landmarker/python). Model weights retain their upstream licensing.
+
+## Workflow
+
+1. Enter BPM, select guitar or bass, and enter the video timestamp of the first beat. Beat 0 in the editor corresponds to this timestamp. The default grid has four subdivisions per beat.
+2. Upload an MP4/MOV/AVI/MKV. MP4/H.264 is recommended. Keep the fretting hand, outer strings, and fret wires visible. Standard tuning and no capo are assumed.
+3. Calibrate the visible neck using four normalized `(x, y)` coordinates. Follow the perimeter in this order: **near/highest string → far/highest string → far/lowest string → near/lowest string**. Near means closer to the nut, independent of camera orientation. Wire 0 is the nut; a crop from wire 3 to wire 12 is valid too. Use the overlay to align the fret wires and strings.
+4. Choose **Audio + video**, then analyze. Audio estimates pitch and attacks. Vision scores physically valid string/fret candidates at the same timestamps. A conflicting visual guess never overrides an audio pitch. An unmatched audio note gets a plausible position labeled `audio` for review. For silent videos, explicitly select **Vision only**.
+5. Edit string, fret, beat, and duration in the table. Add or delete rows, including open strings or notes the detector missed. Your changes export as `manual`. The example button lets you try this before recording anything.
+6. Download the editable JSON project, text tab, or event CSV. Load JSON later to resume editing; re-upload the original video if needed. Videos are not embedded in project files. Browser sessions are not durable saves.
+
+String 1 is high e on guitar and G on bass. BPM changes preserve existing beat positions. Re-analyze the video to quantize source timestamps at a different tempo. Text exports visualize note starts on the selected grid; JSON/CSV retain durations. Very close notes can collapse onto one grid cell during automatic quantization; use a finer grid for fast playing.
+
+## Code structure
+
+```text
+app.py                         Thin development entry point
+src/autotab/
+  domain.py                    Validated notes, tuning, calibration, project
+  ports.py                     Frame source / contact detector interfaces
+  transcription.py             Temporal contact filtering, beat quantization
+  fusion.py                    Audio/visual cross-matching and string selection
+  pipeline.py                  Application orchestration through interfaces
+  storage.py                   Versioned, portable JSON serialization
+  export.py                    Text tablature and note CSV
+  cli.py                       Local launcher and explicit model download
+  adapters/
+    video.py                   OpenCV decoding and sampling
+    geometry.py                Perspective transform and physical fret spacing
+    hand_detector.py           MediaPipe model integration
+    audio.py                   FFmpeg decoding, YIN pitch, attack detection
+  ui/
+    app.py                     Streamlit widgets and session lifecycle
+    editor.py                  Independently testable table validation
+tests/                         Unit, synthetic signal, and integration tests
+docs/architecture.md           Contracts, algorithms, limitations, extension plan
+```
+
+The domain, fusion, persistence, and temporal filtering use only the Python standard library. Optional ML/video/UI imports stay at the edges. The pretrained model is replaceable through `ContactDetector`; it does not own the note format. File headers and function docstrings document assumptions and units.
+
+## Checks
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest
+.\.venv\Scripts\python.exe -m ruff check .
+```
+
+Synthetic signals test pitch and timing, including bass low E. Fake detectors test fusion without model weights. UI tests exercise loading and editing. These checks verify behavior; they do not establish transcription accuracy on real performances.
+
+## Known limits and next steps
+
+- Audio is **monophonic**. Chords, overlapping sustained notes, distortion, backing tracks, and bends can confuse it. There is no trained polyphonic audio model yet.
+- Vision infers contact from fingertip proximity. It cannot reliably see string pressure, barres, occluded fingers, or finger rolls. Handedness is not used to hardcode a fretting hand.
+- Bass uses standard G–D–A–E tuning and a longer pitch-analysis window. Five-string bass, alternate tunings, capos, and microtonal techniques are not implemented.
+- Calibration is static. A moving neck/camera needs recalibration or a future neck-tracking adapter. A/V tracks must already be synchronized; a small tolerance only covers frame sampling.
+- Open-string pitches can be detected from audio, but vision cannot confirm an open string merely from the absence of a visible finger. Such notes remain audio-only.
+- Automatic durations are estimates. In vision-only mode they describe finger dwell, not audible sustain; repeated picking is invisible there.
+- No representative guitar/bass dataset is bundled. Real-world accuracy is unmeasured. A useful next step is annotated clips with onset, pitch, string, and fret labels, followed by accuracy measurement before model training.
+
+See [architecture notes](docs/architecture.md) for extension points and an evaluation plan.
