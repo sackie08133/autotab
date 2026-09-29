@@ -337,13 +337,10 @@ def main() -> None:
             reset_history=st.session_state.pop("pending_reset_history", True),
         )
     st.title("AutoTab")
-    st.write("Turn a performance into a tab you can make your own.")
-    st.caption("Guitar first · Standard 4-string bass supported · Local audio + video analysis")
+    
+    st.caption("Tabs using videos. Guitar (6 String) and Bass (4 String) supported · Local audio + video analysis")
     st.warning(
-        "First-pass prototype: best with clean single-note playing and a stationary fretboard. "
-        "Chords, bends, moving cameras, and backing tracks need manual correction. "
-        "Use standard tuning and enter any capo position in the sidebar."
-    )
+        "Keep the fretboard as still as possible during recording.")
     settings = project_controls()
     upload = recording_input()
     if settings is not None:
