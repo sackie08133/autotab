@@ -1,0 +1,59 @@
+<!doctype html>
+<!--
+  Local four-point calibration component. No network libraries or build tools are
+  required. Streamlit sends an image through its render message; the canvas records
+  normalized coordinates regardless of CSS display size. Only a completed four-point
+  selection is submitted, with a unique event ID so Python can ignore stale reruns.
+  All user-facing strings are static and image data comes from the local decoder.
+-->
+<html lang="en"><head><meta charset="utf-8"><style>
+body { margin: 0; font: 14px system-ui; color: #26332e; background: #f6f8f7; }
+canvas { display:block; width:100%; cursor:crosshair; }
+button { padding:7px 12px; margin:8px 8px 8px 0; cursor:pointer; }
+p { margin:8px 0; }
+</style></head><body>
+<p id="instruction" aria-live="polite">Click 1: near / highest string</p>
+<canvas id="image" aria-label="Fretboard calibration image"></canvas>
+<button id="reset">Reset points</button><button id="apply" disabled>Apply four points</button>
+<script>
+const canvas = document.getElementById("image"), ctx = canvas.getContext("2d");
+const labels = ["near / highest string", "far / highest string", "far / lowest string", "near / lowest string"];
+const photo = new Image();
+let points = [], imageSource = "";
+/** Send a typed Streamlit component protocol message to this iframe's parent. */
+function send(type, extra = {}) { window.parent.postMessage({isStreamlitMessage:true, type, ...extra}, "*"); }
+/** Repaint the unmodified image and numbered selections, then resize the iframe. */
+function draw() {
+  if (!photo.naturalWidth) return;
+  canvas.width = photo.naturalWidth; canvas.height = photo.naturalHeight;
+  ctx.drawImage(photo, 0, 0);
+  points.forEach(([x,y], i) => {
+    ctx.fillStyle = "#ff6347"; ctx.beginPath(); ctx.arc(x*canvas.width,y*canvas.height,7,0,Math.PI*2);ctx.fill();
+    ctx.font = "bold 22px sans-serif";ctx.fillText(String(i+1),x*canvas.width+10,y*canvas.height-10);
+  });
+  document.getElementById("instruction").textContent = points.length < 4 ? `Click ${points.length+1}: ${labels[points.length]}` : "Four points chosen. Apply them to check the grid below.";
+  document.getElementById("apply").disabled = points.length !== 4;
+  send("streamlit:setFrameHeight", {height:document.body.scrollHeight});
+}
+/** Capture clicks relative to the visible image, avoiding pixel-scale assumptions. */
+canvas.addEventListener("click", event => {
+  if (points.length === 4) return;
+  const box = canvas.getBoundingClientRect();
+  points.push([Math.max(0,Math.min(1,(event.clientX-box.left)/box.width)), Math.max(0,Math.min(1,(event.clientY-box.top)/box.height))]);
+  draw();
+});
+document.getElementById("reset").onclick = () => { points=[];draw(); };
+document.getElementById("apply").onclick = () => send("streamlit:setComponentValue", {
+  value:{corners:points,event:crypto.randomUUID()},dataType:"json"
+});
+/** Refresh only when the preview image changes; normal reruns retain pending clicks. */
+window.addEventListener("message", event => {
+  if (event.source !== window.parent || event.data.type !== "streamlit:render") return;
+  const source = event.data.args.image;
+  if (source !== imageSource) { imageSource=source;points=[];photo.src=source; }
+});
+photo.onload = draw;
+new ResizeObserver(draw).observe(document.body);
+send("streamlit:componentReady", {apiVersion:1});
+send("streamlit:setFrameHeight", {height:100});
+</script></body></html>

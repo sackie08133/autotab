@@ -1,0 +1,12 @@
+
+[app]
+streamlit<2,>=1.50
+numpy<3,>=1.26
+opencv-contrib-python<5,>=4.10
+mediapipe<0.11,>=0.10.32
+imageio-ffmpeg<1,>=0.6
+pandas<4,>=2.2
+
+[dev]
+pytest<10,>=8
+ruff<1,>=0.11
