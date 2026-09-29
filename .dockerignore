@@ -1,0 +1,13 @@
+.venv/
+.autotab/
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.py[cod]
+.git/
+.gitignore
+*.mp4
+*.mov
+*.avi
+*.mkv
+.streamlit/secrets.toml

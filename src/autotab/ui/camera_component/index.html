@@ -1,0 +1,118 @@
+<!doctype html>
+<!--
+  Direct webcam/microphone capture using getUserMedia, never screen sharing.
+  Permissions are requested only by the Enable button. MediaRecorder collects a
+  bounded local clip; Stop releases device tracks before transferring base64 video
+  to Python through the Streamlit component protocol. Streamlit rerenders do not
+  restart recording. Unmount/navigation releases the camera and microphone.
+-->
+<html lang="en"><head><meta charset="utf-8"><style>
+body { margin:0; font:14px system-ui; color:#26332e; background:#f6f8f7; }
+video { display:block; width:100%; max-height:380px; background:#202623; }
+button,select { margin:8px 6px 4px 0; padding:9px 12px; }
+#status { min-height:24px; padding:4px 0; }
+</style></head><body>
+<video id="preview" autoplay muted playsinline aria-label="Camera preview"></video>
+<div>
+<button id="enable">Enable camera + microphone</button>
+<label>Camera <select id="devices" disabled><option value="">Default camera</option></select></label>
+<button id="start" disabled>Start recording</button>
+<button id="stop" disabled>Stop recording</button>
+<button id="release" disabled>Turn camera off</button>
+</div>
+<p id="status" role="status" aria-live="polite">Camera is off. Nothing is recorded until you press Start.</p>
+<script>
+const preview=document.getElementById("preview"), devices=document.getElementById("devices");
+const enable=document.getElementById("enable"), start=document.getElementById("start");
+const stop=document.getElementById("stop"), release=document.getElementById("release");
+let stream=null, recorder=null, chunks=[], bytes=0, timer=null, startedAt=0, busy=false;
+/** Send only typed Streamlit messages; recordings are sent after completion. */
+function send(type,extra={}) { parent.postMessage({isStreamlitMessage:true,type,...extra},"*"); }
+/** Update visible status and iframe height after controls change. */
+function status(text) { document.getElementById("status").textContent=text; resize(); }
+/** Keep the full camera preview and controls visible in the host page. */
+function resize() { send("streamlit:setFrameHeight",{height:document.body.scrollHeight}); }
+/** Release hardware immediately; a saved clip remains available in Python. */
+function releaseTracks() {
+  if(stream) stream.getTracks().forEach(track=>track.stop());
+  stream=null;preview.srcObject=null;clearInterval(timer);timer=null;
+  start.disabled=true;stop.disabled=true;release.disabled=true;devices.disabled=true;
+  enable.disabled=busy;
+}
+/** Stop a live recorder exactly once; its stop handler submits the completed clip. */
+function stopRecording() {
+  if(recorder && recorder.state==="recording") {stop.disabled=true;recorder.stop();}
+}
+/** Request the camera and microphone selected by the browser after a user gesture. */
+async function enableCamera() {
+  if(busy) return;
+  releaseTracks();enable.disabled=true;
+  try {
+    if(!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+      throw new Error("This browser cannot record here. Open localhost in Chrome or Edge, or upload an MP4.");
+    }
+    const selected=devices.value;
+    stream=await navigator.mediaDevices.getUserMedia({
+      video:{width:{ideal:1280},height:{ideal:720},frameRate:{ideal:30},
+             ...(selected ? {deviceId:{exact:selected}} : {})},
+      audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}
+    });
+    preview.srcObject=stream;
+    await preview.play();
+    const cameras=(await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==="videoinput");
+    devices.replaceChildren(...cameras.map((d,i)=>new Option(d.label || `Camera ${i+1}`,d.deviceId)));
+    const active=stream.getVideoTracks()[0].getSettings().deviceId;
+    if(active) devices.value=active;
+    devices.disabled=false;start.disabled=false;release.disabled=false;enable.disabled=false;
+    status("Camera ready; microphone enabled. The preview is not mirrored by this app. Press Start recording.");
+  } catch(error) {
+    releaseTracks();
+    status(error.name==="NotAllowedError" ? "Camera/microphone permission was denied. Allow both in the browser's site permissions, then try again." : `Camera unavailable: ${error.message}`);
+  }
+}
+/** Record at a modest bitrate and stop automatically at either the time or size cap. */
+function startRecording() {
+  if(!stream || busy) return;
+  try {
+    const mime=["video/webm;codecs=vp8,opus","video/webm","video/mp4"].find(t=>MediaRecorder.isTypeSupported(t));
+    if(!mime) throw new Error("No supported MP4/WebM recorder. Try Chrome or Edge.");
+    chunks=[];bytes=0;busy=true;
+    recorder=new MediaRecorder(stream,{mimeType:mime,videoBitsPerSecond:1200000,audioBitsPerSecond:128000});
+    recorder.ondataavailable=event=>{
+      if(event.data.size) {chunks.push(event.data);bytes+=event.data.size;}
+      if(bytes>=23*1024*1024) stopRecording();
+    };
+    recorder.onerror=()=>{busy=false;releaseTracks();status("Recording failed. Enable the camera and try again.");};
+    recorder.onstop=async()=>{
+      releaseTracks();status("Preparing completed recording…");
+      try {
+        const blob=new Blob(chunks,{type:recorder.mimeType});chunks=[];
+        if(!blob.size || blob.size>24*1024*1024) throw new Error("Clip is empty or too large; record a shorter clip.");
+        const encoded=await new Promise((resolve,reject)=>{
+          const reader=new FileReader();reader.onload=()=>resolve(reader.result.split(",")[1]);
+          reader.onerror=()=>reject(new Error("Could not read recording."));reader.readAsDataURL(blob);
+        });
+        send("streamlit:setComponentValue",{dataType:"json",value:{id:crypto.randomUUID(),mime:blob.type,data:encoded}});
+        status("Recording captured. Camera and microphone are off. Preparing MP4 in the app…");
+      } catch(error) {status(error.message);}
+      finally {busy=false;enable.disabled=false;}
+    };
+    recorder.start(500);startedAt=Date.now();
+    start.disabled=true;enable.disabled=true;devices.disabled=true;release.disabled=true;stop.disabled=false;
+    status("Recording… 0 seconds. Play your guitar or bass, then press Stop recording.");
+    timer=setInterval(()=>{
+      const elapsed=(Date.now()-startedAt)/1000;
+      status(`Recording… ${Math.floor(elapsed)} / 120 seconds.`);
+      if(elapsed>=120) stopRecording();
+    },500);
+  } catch(error) {busy=false;releaseTracks();status(`Recording failed: ${error.message}`);}
+}
+enable.onclick=enableCamera;devices.onchange=enableCamera;start.onclick=startRecording;stop.onclick=stopRecording;
+release.onclick=()=>{releaseTracks();status("Camera and microphone are off.");};
+window.addEventListener("pagehide",()=>{stopRecording();releaseTracks();});
+window.addEventListener("message",event=>{
+  if(event.source===parent && event.data.type==="streamlit:render") resize();
+});
+new ResizeObserver(resize).observe(document.body);
+send("streamlit:componentReady",{apiVersion:1});resize();
+</script></body></html>
