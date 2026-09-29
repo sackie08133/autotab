@@ -12,9 +12,21 @@ analysis; only the uploaded bytes remain in Streamlit's session. Processing is
 local. The app does not download model weights or upload recordings to a service.
 """
 
+import sys
 from base64 import b64encode
 from dataclasses import replace
 from pathlib import Path
+
+# ruff: noqa: E402
+
+# Support direct execution from a nested Streamlit Cloud entrypoint as well as
+# the root app.py. The editable install remains the preferred deployment path;
+# this fallback makes the source layout self-contained when Cloud starts a file
+# before dependency installation has registered the package.
+for _candidate in (Path(__file__).parents[2], Path(__file__).parents[3]):
+    if (_candidate / "autotab" / "autosave.py").is_file() and str(_candidate) not in sys.path:
+        sys.path.insert(0, str(_candidate))
+        break
 
 import pandas as pd
 import streamlit as st
