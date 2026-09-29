@@ -340,7 +340,7 @@ def main() -> None:
     
     st.caption("Tabs using videos. Guitar (6 String) and Bass (4 String) supported · Local audio + video analysis")
     st.warning(
-        "Keep the fretboard as still as possible during recording.")
+        "Keep the fretboard as still as possible during recording. Bends, Slides, Mutes, Tapping, or chords must be manually reviewed and edited")
     settings = project_controls()
     upload = recording_input()
     if settings is not None:
